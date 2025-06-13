@@ -8,4 +8,4 @@ python-dotenv
 groq
 pandas
 scikit-learn
-psycopg2-binary
+psycopg
