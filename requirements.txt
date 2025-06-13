@@ -6,3 +6,4 @@ jinja2
 aiofiles
 python-dotenv
 groq
+pandas
