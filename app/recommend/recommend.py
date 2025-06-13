@@ -6,8 +6,7 @@ import re
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
+from app.db.connection import engine as sync_engine, SessionLocal as SyncSession  # Updated import
 from app.models import Product
 
 # Configure logging
@@ -20,16 +19,6 @@ logging.basicConfig(
     ]
 )
 logger = logging.getLogger(__name__)
-
-# Read DATABASE_URL from your .env
-DATABASE_URL = os.getenv(
-    "DATABASE_URL",
-    "postgresql+psycopg://postgres:admin@localhost:5432/auto_chatbot_db"
-)
-
-# Create a sync engine & session for pandas loading
-sync_engine = create_engine(DATABASE_URL.replace("+asyncpg", ""), echo=False)
-SyncSession = sessionmaker(bind=sync_engine)
 
 # Module-level cache
 _data_cache = {
@@ -65,7 +54,10 @@ def _load_and_index_from_db():
         df["manufacturer"] = df["manufacturer"].str.replace(r'[^\w\s]', '', regex=True)
 
         # Convert price to numeric
-        df["price"] = pd.to_numeric(df["price"].str.replace(r'PKR\s*', '', regex=True).str.replace(r',', '', regex=True), errors='coerce').astype(float)
+        df["price"] = pd.to_numeric(
+            df["price"].str.replace(r'PKR\s*', '', regex=True).str.replace(r',', '', regex=True),
+            errors='coerce'
+        ).astype(float)
 
         # Preprocess text data
         df["combined_text"] = (
@@ -74,13 +66,13 @@ def _load_and_index_from_db():
             df["manufacturer"].fillna("")
         ).str.lower()
 
-        # Build TF-IDF index with more features
+        # Build TF-IDF index
         logger.info("Building TF-IDF index")
         vect = TfidfVectorizer(
             min_df=1,
             max_df=0.95,
             stop_words="english",
-            ngram_range=(1, 3),  # Include trigrams
+            ngram_range=(1, 3),
             max_features=10000,
             analyzer='word'
         )
@@ -98,7 +90,6 @@ def _load_and_index_from_db():
 
 def _extract_keywords(text):
     """Extract relevant keywords from the diagnosis text."""
-    # Common automotive parts and symptoms related to front lights
     front_light_terms = [
         'front light', 'headlight', 'head lamp', 'light bulb', 'lighting issue',
         'dim light', 'flickering light', 'burnt-out bulb', 'halogen', 'LED',
@@ -106,15 +97,12 @@ def _extract_keywords(text):
         'light switch', 'light cover', 'light trim', 'light bracket', 'light housing'
     ]
     
-    # Extract matching terms
     text_lower = text.lower()
     keywords = [term for term in front_light_terms if term in text_lower]
     
-    # Also extract specific part numbers or codes (like P0420)
     codes = re.findall(r'\b[pP]\d{4}\b', text)
     keywords.extend(codes)
-    
-    # Extract additional common automotive terms
+
     additional_terms = [
         'check engine light', 'oil change', 'tire rotation', 'alignment', 'air filter',
         'brake pads', 'brake rotors', 'coolant', 'oil leak', 'battery terminal',
@@ -155,23 +143,16 @@ def recommend_products(query: str, top_k: int = 5) -> list[dict]:
         return []
 
     try:
-        # Extract keywords from the diagnosis
         processed_query = _extract_keywords(query) + " " + query.lower()
-        
-        # Transform query to TF-IDF
         qv = vect.transform([processed_query])
-        
-        # Calculate cosine similarities
         sims = cosine_similarity(qv, mat).flatten()
-        
-        # Get top matches
         top_idxs = sims.argsort()[:-top_k - 1:-1]
 
         recs = []
         for idx in top_idxs:
             row = df.iloc[idx]
             recs.append({
-                "id": int(row["id"]),  # Convert to int for JSON serialization
+                "id": int(row["id"]),
                 "title": row["title"],
                 "manufacturer": row["manufacturer"],
                 "price": float(row["price"]) if pd.notna(row["price"]) else None,
