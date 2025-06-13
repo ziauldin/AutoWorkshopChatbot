@@ -5,4 +5,4 @@ asyncpg          # if you're using PostgreSQL
 jinja2
 aiofiles
 python-dotenv
-firebase-admin   # if you're using Firebase
+groq
